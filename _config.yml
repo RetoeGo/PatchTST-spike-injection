@@ -1,0 +1,4 @@
+title: PatchTST Robustness Blog
+description: Does patch averaging make PatchTST more robust to training anomalies than a vanilla Transformer?
+theme: jekyll-theme-minimal
+markdown: kramdown
