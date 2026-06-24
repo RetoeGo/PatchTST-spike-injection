@@ -105,6 +105,6 @@ The Reproduction of the PatchTST baseline is shown below.
 
 ## Dataset and code availability
 
-- **Generation code:** `[github link — e.g. https://github.com/<your-username>/<your-repo>/blob/main/patchtst_etth1_spike.ipynb]`
+- **Generation code:** [RetoeGo/PatchTST-spike-injection](https://github.com/RetoeGo/PatchTST-spike-injection/blob/main/patchtst.ipynb)
 - **Base dataset (ETTh1):** [zhouhaoyi/ETDataset](https://github.com/zhouhaoyi/ETDataset)
 - **PatchTST:** [yuqinie98/PatchTST](https://github.com/yuqinie98/PatchTST)
