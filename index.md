@@ -1,26 +1,18 @@
 ---
-title: "Does Patch Averaging Make PatchTST More Robust to Training Anomalies Than a Vanilla Transformer?"
+title: "Does patch averaging make patchtst more robust to training anomalies than a vanilla transformer?"
+theme: jekyll-theme-minimal
 date: 2026-06-24
 ---
+This blogpost was written as an assignment for the course Fundamentals of Machine and Deeplearning at TU Delft.
+Part 1 covers *why* the experiment matters and *what* control dataset was build. Part 2 covers the experimental setup and the results. 
 
 # Part 1: Motivation and Control Dataset
-
-This post is in two parts: Part 1 covers *why* this experiment matters and *what* control dataset we built to test it. Part 2 covers the experimental setup and results.
-
 ## The property we are testing
+In this blogpost I test whether patching makes a transformer more robust against the effects of anomalies. I compare [PatchTST](https://arxiv.org/abs/2211.14730) with a [Vanilla Transformer](https://arxiv.org/abs/1706.03762). Patching groups multiple timesteps together, in this experiment I group 16 timesteps together into a single embedding vector. A vanilla transformer uses a single embedding per timestep. PatchTST's authors motivate the design with three benefits: it retains local semantic information, it reduces the quadratic cost of attention, and it allows the model to attend over a longer history.
 
-[PatchTST](https://arxiv.org/abs/2211.14730) (Nie et al., 2023, ICLR) changed how Transformers are applied to time series forecasting by splitting each input series into patches of `P` consecutive timesteps (default `P = 16`) and embedding each patch as a single token, instead of giving every individual timestep its own token. The paper motivates this design around three benefits: retaining local semantic information, reducing the quadratic cost of attention, and allowing the model to attend over a longer history. Patch averaging is explicitly positioned as a representational choice for capturing patterns, not as a robustness mechanism.
-
-A vanilla Transformer for forecasting — following [Vaswani et al., 2017, "Attention Is All You Need"](https://arxiv.org/abs/1706.03762) — does the opposite: every timestep gets its own token, so the attention mechanism sees and can directly weight each individual value.
-
-This asymmetry suggested a property the PatchTST paper does not test:
-
-> **Property under test:** Because PatchTST compresses 16 raw timesteps into one embedding vector, a single anomalous timestep injected during training can only ever contribute a fraction (≈1/16, when the anomaly is narrow) of that vector. A vanilla Transformer, by contrast, gives the same anomalous timestep a full, dedicated token. We predicted PatchTST should therefore generalize better than a vanilla Transformer to a *clean* test set after training on data containing a single localized anomaly, and that this advantage should depend on how wide the anomaly is relative to the patch length (16 hours).
-
-This is a robustness claim about patch-based tokenization that sits one inferential step beyond what either source paper measures directly — PatchTST evaluates accuracy on clean benchmarks, and the standard Transformer baseline is evaluated under the same clean conditions. Neither paper trains on corrupted data and checks generalization to clean data afterward. That gap is what our control dataset is built to fill.
+**Hypothesis** Because PatchTST compresses 16 raw timesteps into one embedding vector, a single anomalous timestep injected during training can only ever con    tribute a fraction (≈1/16, when the anomaly is narrow) of that vector. A vanilla Transformer, by contrast, gives the same anomalous timestep a full, dedicated token. We     predicted PatchTST should therefore generalize better than a vanilla Transformer to a *clean* test set after training on data containing a single localized anomaly, and     that this advantage should depend on how wide the anomaly is relative to the patch length (16 hours).
 
 ## Why a control dataset, and not just "noisy data"
-
 To isolate *this specific mechanism* (patch averaging dilutes anomalies) from everything else that differs between PatchTST and a vanilla Transformer (different parameter counts, different inductive biases, different training dynamics), the dataset has to satisfy four constraints:
 
 1. **Exactly one anomaly, nothing else changed.** If we added many anomalies or general noise, any MAE difference between models could come from the model's general noise-handling rather than from the patch-averaging mechanism specifically. One injected anomaly means one cause for any observed effect.
@@ -55,53 +47,6 @@ For the falsification check, we generate a mirrored **negative-spike** version o
 ```
 X'(t) = X(t) − A · exp(−(t − t₀)² / 2σ²)
 ```
-
-### Generation code
-
-The full injection logic, run directly on the downloaded ETTh1 CSV:
-
-```python
-import numpy as np
-import pandas as pd
-
-ETT_FEATURES = ["HUFL", "HULL", "MUFL", "MULL", "LUFL", "LULL", "OT"]
-ETT_TARGET = "OT"
-
-df_ett = pd.read_csv("dataset/ETTh1.csv")
-
-BORDER2_TRAIN = 12 * 30 * 24                      # end of train  = 8640
-BORDER1_TEST  = 12 * 30 * 24 + 4 * 30 * 24        # start of test = 11520
-
-n  = len(df_ett)
-t  = np.arange(n, dtype=float)
-t0 = int(BORDER2_TRAIN * 0.5)                     # midpoint of training window
-
-p95_train = np.percentile(df_ett[ETT_TARGET].iloc[:BORDER2_TRAIN].values, 95)
-A = 10.0 * p95_train
-
-SIGMA_VARIANTS = [
-    ("sigma_1",    1),
-    ("sigma_4",    4),
-    ("sigma_16",  16),
-    ("sigma_32",  32),
-    ("sigma_64",  64),
-    ("sigma_128", 128),
-]
-
-for label, sigma in SIGMA_VARIANTS:
-    S = A * np.exp(-((t - t0) ** 2) / (2 * sigma ** 2))
-    df_variant = df_ett.copy()
-    # Only training + validation rows (index < BORDER1_TEST) are modified.
-    # Test rows are left completely untouched.
-    df_variant.loc[df_variant.index < BORDER1_TEST, ETT_TARGET] = (
-        df_variant.loc[df_variant.index < BORDER1_TEST, ETT_TARGET]
-        + S[:BORDER1_TEST]
-    )
-    df_variant.to_csv(f"dataset/ETTh1_{label}.csv", index=False)
-```
-
-The negative-spike variants are generated identically, with the sign of `S` flipped before it's added.
-
 ## What the control dataset looks like
 
 | σ (hours) | Spike width (FWHM) | Fraction of train+val affected | Patches touched (out of 16h each) |
