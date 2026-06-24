@@ -10,9 +10,95 @@ Part 1 covers *why* the experiment matters and *what* control dataset was build.
 ## The property we are testing
 In this blogpost I test whether patching makes a transformer more robust against the effects of anomalies. I compare [PatchTST](https://arxiv.org/abs/2211.14730) with a [Vanilla Transformer](https://arxiv.org/abs/1706.03762). Patching groups multiple timesteps together, in this experiment I group 16 timesteps together into a single embedding vector. A vanilla transformer uses a single embedding per timestep. PatchTST's authors motivate the design with three benefits: it retains local semantic information, it reduces the quadratic cost of attention, and it allows the model to attend over a longer history.
 
-**Hypothesis** Because PatchTST compresses 16 raw timesteps into one embedding vector, a single anomalous timestep injected during training can only ever con    tribute a fraction (≈1/16, when the anomaly is narrow) of that vector. A vanilla Transformer, by contrast, gives the same anomalous timestep a full, dedicated token. We     predicted PatchTST should therefore generalize better than a vanilla Transformer to a *clean* test set after training on data containing a single localized anomaly, and     that this advantage should depend on how wide the anomaly is relative to the patch length (16 hours).
+**Hypothesis** 
+The hypothesis is that PatchTST is less affected by anomalous timesteps, since those timesteps only contribute to a small part of the embedding vector. Therefore PatchTST should generalize better than a vanilla transformer to a clean test set after training on the anomaly. This generalization should depend on the width of the anomaly relative to the patch length.
+
 
 ## Why a control dataset, and not just "noisy data"
+To isolate patch averaging over an anomaly, the dataset has to satisfy the following constraints.
+1. **Exaclty a single anomaly, nothing else changed**
+2. **The test set does not have an anomaly**
+3. **Only the width of the anomaly is changed, spanning over multiple patches**
+
+
+## The base dataset
+For the base dataset I used [ETTh1](https://github.com/zhouhaoyi/ETDataset), I used this dataset because it was used in the original PatchTST paper and shows PatchTST outperforming a vanilla Transformer. Creating a good baseline dataset from scratch turned out to be hard: a handcrafted dataset was either too complex (too many confounders and noise) or too simple (a single formula both models captured equally well). For the training results in part 2 I used the same 70/10/20 train/validation/test split (8,640 / 2,880 / 2,880 hours) as PatchTST used in their paper.
+
+## The anomaly
+To create the anomaly, a single gausian spike was injected in the training and validation portions using the formula below:
+
+```
+X'(t) = X(t) + A · exp(−(t − t₀)² / 2σ²)
+```
+
+- **t₀** is fixed at the midpoint of the training window, far from the train and test boundary.
+- **A** The amplitude of the anomaly is 10 times the 95% hight and is therefore a reasonable outlier. 
+- **σ** The spikes width takes on six values: 1, 4, 16, 32, 64, and 128 hours. This range is chosen relative to PatchTST's patch length of 16: at σ=1 the spike is essentially a single anomalous point. The wider the spike the more patches it spans.
+
+<figure>
+  <img src="images/etth1_spike_variants.png" alt="ETTh1 OT channel with original series and six spike-width variants overlaid">
+  <figcaption><em>Top: the original ETTh1 OT series with train/validation/test regions shaded. Bottom: all six σ spike variants overlaid on the train+validation region only, centered on the same injection point t₀. Spike amplitude A = 10 × the 95th percentile of training OT ≈ 353.</em></figcaption>
+</figure>
+
+# Part 2: Experiments and Findings
+
+## Experimental setup
+For the experiment I used the same setup as the original PatchTST uses with a patch size of 16.
+
+| | PatchTST | Transformer |
+|---|---|---|
+| Tokenization | 16-hour patches, stride 8 | individual timesteps |
+| `d_model` | 16 | 16 |
+| Heads | 4 | 4 |
+| Layers | 3 | 3 |
+| `d_ff` | 128 | 128 |
+| `seq_len` | 336 | 336 |
+| `pred_len` | 96 | 96 |
+| Learning rate | 0.0001 | 0.0001 |
+| Batch size | 128 | 128 |
+| Epochs | 10 | 10 |
+
+
+## Results
+
+### PatchTST and Transformer, positive spike
+
+| σ (hours) | PatchTST MAE | Transformer MAE |
+|---|---|---|
+| **Baseline (no spike)** | **0.1761** | **0.4725** |
+| 1   | 0.1557 | 0.4857 |
+| 4   | 0.1209 | 0.5016 |
+| 16  | 0.0767 | 0.4893 |
+| 32  | 0.0585 | 0.3871 |
+| 64  | 0.0433 | 0.1998 |
+
+## Findings
+
+**1. PatchTST's test MAE improves monotonically as the spike gets wider — all the way out to σ=128, far past the 16-hour patch length.** This is the opposite of what we predicted. We expected the advantage to *peak* near σ=16 and erode afterward, once the spike could no longer be diluted within a single patch. Instead, PatchTST kept improving the larger the spike got, with no sign of the predicted reversal in our tested range.
+
+**2. The Transformer behaves erratically at small σ, then improves sharply at large σ.** Its MAE actually gets slightly *worse* than baseline at σ=1 and σ=4 (0.4857, 0.5016 vs. a baseline of 0.4725), is roughly flat at σ=16, and only starts improving meaningfully from σ=32 onward — reaching 0.1256 at σ=128, a substantial improvement over its own baseline, but still far behind PatchTST's 0.0311 at the same width.
+
+**3. Both architectures ultimately treat a sufficiently wide training anomaly as a regularizer, not just PatchTST.** A spike wide enough to occupy a meaningful fraction of the training window (σ≥32, roughly 5+ patches / 75+ hours) seems to act like injected noise that discourages both models from overfitting to spurious fine-grained patterns — closer to a form of data augmentation than to a "training anomaly" in the adversarial sense. The original motivation framed this as a PatchTST-specific dilution effect; the data suggests it's at least partly a general phenomenon, with PatchTST simply benefiting earlier and more strongly.
+
+**4. The positive/negative symmetry check supports an architectural (not purely scaler-driven) explanation for PatchTST, but is inconclusive for Transformer.** At σ=1, 4, and 16, PatchTST's positive- and negative-spike MAEs are close to each other (e.g., 0.0767 vs. 0.0709 at σ=16) — consistent with the improvement coming from the architecture's handling of the anomaly rather than from which direction the `StandardScaler` mean got shifted. The Transformer, by contrast, does *not* show this symmetry: the negative spike consistently outperforms the positive spike at the same σ (e.g., 0.4179 vs. 0.4857 at σ=1). That asymmetry is itself a finding — it suggests the Transformer's behavior here is more sensitive to scaler shift, spike sign, or some interaction we haven't isolated, rather than being a clean architectural effect in the way PatchTST's result is.
+
+
+
+
+
+
+
+
+We use the standar    d 70/10/20 train/validation/test split (8,640 / 2,880 / 2,880 hours), the same split used by both PatchTST and the original Transformer forecasting baselines.
+
+
+
+
+
+
+I tried to create my own baseline, but the handcrafted dataset seemed too hard (many confounders) or too simple (a single formula caputured easily by both) A handcrafted dataset seemed to simple or too hard. 
+
+
 To isolate *this specific mechanism* (patch averaging dilutes anomalies) from everything else that differs between PatchTST and a vanilla Transformer (different parameter counts, different inductive biases, different training dynamics), the dataset has to satisfy four constraints:
 
 1. **Exactly one anomaly, nothing else changed.** If we added many anomalies or general noise, any MAE difference between models could come from the model's general noise-handling rather than from the patch-averaging mechanism specifically. One injected anomaly means one cause for any observed effect.
