@@ -4,10 +4,10 @@ theme: jekyll-theme-minimal
 date: 2026-06-24
 ---
 This blogpost was written as an assignment for the course Fundamentals of Machine and Deeplearning at TU Delft.
-Part 1 covers *why* the experiment matters and *what* control dataset was build. Part 2 covers the experimental setup and the results. 
+Part 1 covers *why* the experiment matters and *how* the control dataset was build. Part 2 covers the experimental setup and the results. 
 
 # Part 1: Motivation and Control Dataset
-## The property we are testing
+## The property I am testing
 In this blogpost I test whether patching makes a transformer more robust against the effects of anomalies. I compare [PatchTST](https://arxiv.org/abs/2211.14730) with a [Vanilla Transformer](https://arxiv.org/abs/1706.03762). Patching groups multiple timesteps together, in this experiment I group 16 timesteps together into a single embedding vector. A vanilla transformer uses a single embedding per timestep. PatchTST's authors motivate the design with three benefits: it retains local semantic information, it reduces the quadratic cost of attention, and it allows the model to attend over a longer history.
 
 **Hypothesis** 
@@ -19,6 +19,10 @@ To isolate patch averaging over an anomaly, the dataset has to satisfy the follo
 1. **Exaclty a single anomaly, nothing else changed**
 2. **The test set does not have an anomaly**
 3. **Only the width of the anomaly is changed, spanning over multiple patches**
+
+A single anomaly makes it easy to find and replicate a robust effect. The test set is clean, this gives a clean baseline to compare against. By only changing the width of the anomaly, it is possible to compare the effect of the anomaly on a single patch with the effect over multiple patches. Using a clean test set makes it obvious how well each model recovers after training on the anomaly.
+
+By using this approach I test how the local semantic information uses the anomally as training data for its final prediction. 
 
 
 ## The base dataset
@@ -87,14 +91,14 @@ The Reproduction of the PatchTST baseline is shown below.
   <figcaption><em>Forecasts on the first clean test window, OT channel, for each spike width σ. PatchTST (left, orange) tracks the true series closely at every σ. Transformer (right, purple) is out of phase at small σ and only tracks the true series more closely from σ equal to 32h onward.</em></figcaption>
 </figure>
 
-| σ (h) | cov | P-pos | T-pos | Adv-pos |
+| σ | patch coverage | PatchTST MAE | Transformer MAE | dMAE |
 |---|---|---|---|---|
-| 1 | 0.1x | 0.1557 | 0.4857 | +0.3300 |
-| 4 | 0.2x | 0.1209 | 0.5016 | +0.3808 |
-| 16 | 1.0x | 0.0767 | 0.4893 | +0.4126 |
-| 32 | 2.0x | 0.0585 | 0.3871 | +0.3286 |
-| 64 | 4.0x | 0.0433 | 0.1998 | +0.1565 | 
-| 128 | 8.0x | 0.0311 | 0.1256 | +0.0946 |
+| 1 | 0.1x | 0.1557 | 0.4857 | 0.3300 |
+| 4 | 0.2x | 0.1209 | 0.5016 | 0.3808 |
+| 16 | 1.0x | 0.0767 | 0.4893 | 0.4126 |
+| 32 | 2.0x | 0.0585 | 0.3871 | 0.3286 |
+| 64 | 4.0x | 0.0433 | 0.1998 | 0.1565 | 
+| 128 | 8.0x | 0.0311 | 0.1256 | 0.0946 |
 
 ## Findings
 
